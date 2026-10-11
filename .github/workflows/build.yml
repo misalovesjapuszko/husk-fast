@@ -40,22 +40,13 @@ jobs:
 
       - name: Pick the newest Xcode
         run: |
+          # The runner has ~96 GB free, so nothing is deleted: the Xcode_*.app
+          # entries are symlinks to one another, and pruning "the others" once
+          # removed the very Xcode selected here.
           XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
           sudo xcode-select -s "$XCODE"
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-
-      - name: Free disk space
-        run: |
-          df -h /
-          # Simulator runtimes and the Xcodes we did not pick are tens of GB.
-          xcrun simctl delete all || true
-          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches || true
-          KEEP="$(xcode-select -p | sed 's|/Contents/Developer||')"
-          for x in /Applications/Xcode_*.app; do
-            [ "$x" = "$KEEP" ] || sudo rm -rf "$x"
-          done
-          df -h /
 
       - name: Install build tools
         run: |
