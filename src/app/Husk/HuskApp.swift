@@ -47,6 +47,16 @@ final class HuskAppDelegate: NSObject, UIApplicationDelegate {
         HuskLog.log("downloads", "woken for background download events")
         Downloads.shared.backgroundCompletion = completionHandler
     }
+
+    /// The scene delegate is only here for Home Screen quick actions. A cold launch from one delivers it in these
+    /// options rather than to the scene, so it is handed on from here; Router keeps the request until the UI can act.
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if let item = options.shortcutItem { QuickActions.perform(item) }
+        let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        config.delegateClass = HuskSceneDelegate.self
+        return config
+    }
 }
 
 @main
@@ -78,6 +88,11 @@ struct HuskApp: App {
 
         // Game controllers, for the games the native runtime runs.
         Task { @MainActor in HuskGamepads.shared.start() }
+        // The same controllers, as keys, for apps inside Android; and the heat and memory the overlay shows.
+        Task { @MainActor in
+            GuestGamepad.shared.start()
+            GuestStats.shared.start()
+        }
     }
 
     var body: some Scene {

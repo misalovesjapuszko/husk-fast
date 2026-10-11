@@ -1859,6 +1859,15 @@ final class AndroidHost: ObservableObject {
         HuskLog.log("crash", "---- end of crash buffer ----")
     }
 
+    /// Where the chosen render scale is kept, so it can be put back after a cold boot or a new panel size.
+    nonisolated static let renderScaleKey = "husk.renderScale"
+
+    /// The chosen render scale, 1 when none was chosen.
+    nonisolated static var renderScale: Double {
+        let v = UserDefaults.standard.double(forKey: renderScaleKey)
+        return v > 0 ? min(1, v) : 1
+    }
+
     /// Make Android draw fewer pixels.
     ///
     /// The scanout stays 360x800 because the snapshot pinned it, but `wm size`
@@ -1870,9 +1879,12 @@ final class AndroidHost: ObservableObject {
     /// Density moves with it, or every app lays out for a screen that is no
     /// longer there and the UI ends up cropped.
     func setRenderScale(_ scale: Double, then: @escaping () -> Void = {}) {
+        UserDefaults.standard.set(scale, forKey: Self.renderScaleKey)
         busy = scale >= 1 ? "Restoring full resolution…" : "Reducing render size…"
+        // The panel this machine was created with: the snapshot's pins only describe it when no custom size or
+        // landscape panel replaced them, and scaling the wrong shape distorts every app.
+        let base = (xres: QemuRunner.bootGuestRes.w, yres: QemuRunner.bootGuestRes.h)
         Task.detached { [weak self] in
-            let base = GuestImage.shared.snapshotPins
             defer { Task { @MainActor in self?.busy = nil; then() } }
 
             // Physical density, so the override keeps the same physical scale.
@@ -1891,10 +1903,12 @@ final class AndroidHost: ObservableObject {
             } else {
                 // Rounded to even numbers: odd widths give SurfaceFlinger a
                 // half-pixel scale factor and a blurrier result than the size
-                // reduction is worth.
-                let w = max(240, Int((Double(base.xres) * scale / 2).rounded()) * 2)
-                let h = max(480, Int((Double(base.yres) * scale / 2).rounded()) * 2)
-                let d = max(120, Int((Double(physical) * scale).rounded()))
+                // reduction is worth. The floor is applied to the scale, not
+                // to each side, so the shape never changes.
+                let s = max(scale, 200 / Double(max(1, min(base.xres, base.yres))))
+                let w = Int((Double(base.xres) * s / 2).rounded()) * 2
+                let h = Int((Double(base.yres) * s / 2).rounded()) * 2
+                let d = max(80, Int((Double(physical) * s).rounded()))
                 _ = try? GuestBridge.shared.shell("wm size \(w)x\(h); wm density \(d)",
                                                   timeout: 60)
                 HuskLog.log("perf", "render size \(w)x\(h) density \(d) "

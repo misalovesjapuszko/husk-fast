@@ -172,6 +172,10 @@ struct ContentView: View {
         // APKs meant for Android wait until it can take them.
         .onChange(of: host.isReady) { ready in
             incoming.installForAndroidIfReady()
+            // A chosen render quality survives cold boots and panel changes: put it back once Android can take it.
+            if ready, UserDefaults.standard.object(forKey: AndroidHost.renderScaleKey) != nil {
+                host.setRenderScale(AndroidHost.renderScale)
+            }
             // An app asked for while Android was off: open it now.
             if ready, let pkg = router.pendingAndroidLaunch {
                 router.pendingAndroidLaunch = nil
@@ -180,6 +184,8 @@ struct ContentView: View {
         }
         .onChange(of: host.busy) { _ in incoming.installForAndroidIfReady() }
         // A Home Screen clip for Android, or for an app inside it.
+        // Long-press menu on Husk's icon: Android, and the apps used last.
+        .onChange(of: host.packages) { _ in QuickActions.refresh() }
         .onChange(of: router.androidClipTaps) { _ in
             clipAskedJIT = false
             serveAndroidClip()
@@ -210,6 +216,7 @@ struct ContentView: View {
             evaluate()
             // A clip that cold-launched Husk set its request before this view could watch for it.
             serveAndroidClip()
+            QuickActions.refresh()
         }
         // The two-parameter onChange is iOS 17; this single-parameter form is
         // deprecated there but still works, and is the only one that compiles
@@ -385,6 +392,8 @@ struct GuestScreenView: View {
     @State private var keyboard = false
     @State private var rotated = HuskGLView.rotated
     @State private var showControls = false
+    @State private var showSpeed = false
+    @AppStorage(GuestStats.overlayKey) private var perfOverlay = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -437,6 +446,14 @@ struct GuestScreenView: View {
                 .transition(.opacity)
             }
 
+            // Frame rate, heat and memory when asked for; the heat warning whenever it applies.
+            VStack(spacing: 6) {
+                if perfOverlay && !chromeHidden { GuestPerfOverlay() }
+                GuestHeatWarning()
+            }
+            .padding(.top, 8)
+            .animation(.easeInOut(duration: 0.3), value: perfOverlay)
+
             // Zero-sized: it exists only to hold first-responder status, which is
             // what both the on-screen keyboard and hardware key events depend on.
             KeyCapture(active: $keyboard).frame(width: 0, height: 0)
@@ -484,6 +501,13 @@ struct GuestScreenView: View {
                                     HuskLog.log("ui", "sent HOME to Android")
                                 }
                             } label: { Label("Home", systemImage: "house") }
+                            // Types the iOS clipboard into whatever field Android has focused.
+                            Button { GuestPaste.pasteFromIOS() } label: {
+                                Label("Paste from iPhone/iPad", systemImage: "doc.on.clipboard")
+                            }
+                            Button { showSpeed = true } label: {
+                                Label("Speed & Quality", systemImage: "speedometer")
+                            }
                             // Android will not reshape its panel, so when an app
                             // asks for landscape it turns its own composition
                             // inside a portrait frame. This turns it back.
@@ -529,7 +553,11 @@ struct GuestScreenView: View {
         .persistentSystemOverlays(.hidden)
         .sheet(isPresented: $showControls) {
             ControlsSheet(keyboard: $keyboard)
-                .presentationDetents([.height(300)])
+                .presentationDetents([.height(330)])
+        }
+        .sheet(isPresented: $showSpeed) {
+            GuestQualitySheet()
+                .presentationDetents([.medium])
         }
     }
 }
@@ -624,6 +652,7 @@ struct ShareSheet: UIViewControllerRepresentable {
 /// wondering whether you simply cannot find it.
 struct ControlsSheet: View {
     @Binding var keyboard: Bool
+    @AppStorage(GuestGamepad.enabledKey) private var gamepad = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -657,13 +686,16 @@ struct ControlsSheet: View {
                     }
                     .buttonStyle(.plain)
                     RowDivider()
-                    row("gamecontroller", "Gamepad", on: false, available: false)
+                    Button { gamepad.toggle() } label: {
+                        row("gamecontroller", "Gamepad", on: gamepad, available: true)
+                    }
+                    .buttonStyle(.plain)
                     RowDivider()
                     row("computermouse", "Mouse", on: false, available: false)
                 }
 
-                Text("Touch always works. A gamepad and a pointer are not wired "
-                   + "through to Android yet.")
+                Text("A paired controller works as keys: D-pad or left stick = arrows, "
+                   + "A = Enter, B = Back, X = Space, Y = Tab, L/R = Q/E, menu = Menu.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textDim)
                     .multilineTextAlignment(.center)
