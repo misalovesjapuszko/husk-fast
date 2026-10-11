@@ -95,6 +95,8 @@ jobs:
         run: |
           brew install meson ninja pkg-config xcodegen qemu
           rustup target add aarch64-apple-ios
+          # virglrenderer's meson runs Mesa's generators under Homebrew's python3.
+          /opt/homebrew/bin/python3 -m pip install --break-system-packages pyyaml mako
 
       - name: Restore build cache
         id: cache
