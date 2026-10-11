@@ -25,6 +25,8 @@ struct ContentView: View {
     @State private var showOnboarding = Onboarding.needed
     /// True while the launch boot screen is up, rather than the library.
     @State private var booting = false
+    /// A clip's request has already asked for JIT once; asking again on every foreground would loop.
+    @State private var clipAskedJIT = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(Theme.Appearance.key) private var appearance = Theme.Appearance.system
     @ObservedObject private var theme = AppTheme.shared
@@ -177,6 +179,11 @@ struct ContentView: View {
             }
         }
         .onChange(of: host.busy) { _ in incoming.installForAndroidIfReady() }
+        // A Home Screen clip for Android, or for an app inside it.
+        .onChange(of: router.androidClipTaps) { _ in
+            clipAskedJIT = false
+            serveAndroidClip()
+        }
         .sheet(isPresented: $jit.showSetup) { JITSetupFlow() }
         // The built-in helper attaches while Husk stays in the foreground, so
         // there is no relaunch to trigger the region claim below; this is it.
@@ -201,6 +208,8 @@ struct ContentView: View {
             router.openGuest = { showGuestScreen = true }
             router.startAndroid = { startFromLibrary() }
             evaluate()
+            // A clip that cold-launched Husk set its request before this view could watch for it.
+            serveAndroidClip()
         }
         // The two-parameter onChange is iOS 17; this single-parameter form is
         // deprecated there but still works, and is the only one that compiles
@@ -240,6 +249,9 @@ struct ContentView: View {
         // After the first call this is a no-op, and on success it also detaches the debugger.
         JITBootstrap.prewarm()
 
+        // A clip that had to wait for JIT can go ahead now.
+        serveAndroidClip()
+
         // Start on launch, when that is what was asked for.
         //
         // This deliberately did nothing for a long time, and the reason was
@@ -252,6 +264,47 @@ struct ContentView: View {
               !showOnboarding else { return }
         HuskLog.log("ui", "starting Android on launch")
         booting = true
+        start()
+    }
+
+    /// Carry out a Home Screen clip's request: Android itself ("") or one app in it.
+    ///
+    /// Whatever state Android is in: up, it opens now; booting, it opens once ready (pendingAndroidLaunch); off, it starts.
+    /// Without JIT the request waits and JIT is asked for once; evaluate() calls back here when it attaches.
+    private func serveAndroidClip() {
+        guard let want = router.androidFromClip else { return }
+        let pkg: String? = want.isEmpty ? nil : want
+
+        // Nothing to start: leave them on Android's page, which offers the download.
+        guard guest.state == .ready else {
+            router.androidFromClip = nil
+            return
+        }
+        if host.isReady, host.busy == nil {
+            router.androidFromClip = nil
+            if let pkg { host.launch(pkg) { showGuestScreen = true } } else { showGuestScreen = true }
+            return
+        }
+        if started {
+            router.androidFromClip = nil
+            if let pkg { router.pendingAndroidLaunch = pkg } else { showGuestScreen = true }
+            return
+        }
+        guard JITBootstrap.ready else {
+            if !clipAskedJIT {
+                clipAskedJIT = true
+                HuskLog.log("ui", "clip wants Android but JIT is off; enabling with \(jit.resolvedMethod.title)")
+                jit.enable()
+            }
+            return
+        }
+        router.androidFromClip = nil
+        clipAskedJIT = false
+        HuskLog.log("ui", "starting Android for a Home Screen clip")
+        // The boot screen covers the wait; under it, Android's own screen for a bare Android clip, while an app's clip
+        // opens the app (and its screen) once Android is ready.
+        booting = true
+        if let pkg { router.pendingAndroidLaunch = pkg } else { showGuestScreen = true }
         start()
     }
 

@@ -13,6 +13,8 @@ import UIKit
 enum AppClip {
     static let scheme = "husk"
     static let host = "open_app"
+    /// husk://open_android starts Android; husk://open_android?package=<name> also opens that app inside it.
+    static let androidHost = "open_android"
 
     /// The link the clip opens.
     static func link(for id: String) -> URL {
@@ -23,9 +25,35 @@ enum AppClip {
         return c.url!
     }
 
+    /// The link an Android clip opens: Android itself, or one app inside it.
+    static func androidLink(package: String?) -> URL {
+        var c = URLComponents()
+        c.scheme = scheme
+        c.host = androidHost
+        if let package { c.queryItems = [URLQueryItem(name: "package", value: package)] }
+        return c.url!
+    }
+
     /// husk://open_app?unique_identifier=<id>: open that game's page and start it. True when the URL was one.
+    /// husk://open_android[?package=<name>]: start Android, then open the app. The root view carries it out, because
+    /// only it can start Android, and from a cold launch JIT may have to be turned on first.
     @discardableResult
     static func handle(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == scheme, url.host?.lowercased() == androidHost {
+            let pkg = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "package" })?.value.flatMap { $0.isEmpty ? nil : $0 }
+            HuskLog.log("ui", "app clip: opening Android" + (pkg.map { " and \($0)" } ?? ""))
+            let r = Router.shared
+            r.tab = .library
+            if let pkg, let p = AndroidHost.shared.packages.first(where: { $0.name == pkg }) {
+                r.library = [.android(p)]
+            } else {
+                r.library = [.androidSystem]
+            }
+            r.androidFromClip = pkg ?? ""
+            r.androidClipTaps += 1
+            return true
+        }
         guard url.scheme?.lowercased() == scheme, url.host?.lowercased() == host,
               let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "unique_identifier" })?.value,
               !id.isEmpty else { return false }
@@ -39,28 +67,33 @@ enum AppClip {
 
     /// The profile: one Web Clip with the game's name and icon.
     static func profile(for app: TLApp) -> Data {
+        profile(id: app.id, label: app.label, link: link(for: app.id), icon: iconPNG(path: app.iconPath))
+    }
+
+    /// One Web Clip with this name, link and icon.
+    static func profile(id: String, label: String, link: URL, icon: Data?) -> Data {
         let clip = UUID().uuidString, outer = UUID().uuidString
         var payload: [String: Any] = [
             "PayloadType": "com.apple.webClip.managed",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "app.husk.clip.\(safe(app.id)).webclip",
+            "PayloadIdentifier": "app.husk.clip.\(safe(id)).webclip",
             "PayloadUUID": clip,
-            "PayloadDisplayName": app.label,
-            "Label": app.label,
-            "URL": link(for: app.id).absoluteString,
+            "PayloadDisplayName": label,
+            "Label": label,
+            "URL": link.absoluteString,
             "IsRemovable": true,
             "FullScreen": false,
             "Precomposed": true,
             "IgnoreManifestScope": true,
         ]
-        if let icon = iconPNG(app) { payload["Icon"] = icon }
+        if let icon { payload["Icon"] = icon }
         let plist: [String: Any] = [
             "PayloadType": "Configuration",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "app.husk.clip.\(safe(app.id))",
+            "PayloadIdentifier": "app.husk.clip.\(safe(id))",
             "PayloadUUID": outer,
-            "PayloadDisplayName": "\(app.label) (Husk)",
-            "PayloadDescription": "Puts \(app.label) on your Home Screen. It opens in Husk.",
+            "PayloadDisplayName": "\(label) (Husk)",
+            "PayloadDescription": "Puts \(label) on your Home Screen. It opens in Husk.",
             "PayloadOrganization": "Husk",
             "PayloadRemovalDisallowed": false,
             "PayloadContent": [payload],
@@ -70,9 +103,9 @@ enum AppClip {
 
     private static func safe(_ s: String) -> String { String(s.map { $0.isLetter || $0.isNumber || $0 == "." ? $0 : "-" }) }
 
-    /// The game's icon as a 180-point square PNG (the size iOS draws home-screen icons from).
-    private static func iconPNG(_ app: TLApp) -> Data? {
-        guard let path = app.iconPath, let image = UIImage(contentsOfFile: path) else { return nil }
+    /// An icon as a 180-point square PNG (the size iOS draws home-screen icons from).
+    private static func iconPNG(path: String?) -> Data? {
+        guard let path, let image = UIImage(contentsOfFile: path) else { return nil }
         let side: CGFloat = 180
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -86,17 +119,47 @@ enum AppClip {
         }
     }
 
-    /// Serve the profile and open it. The server stays up until the sheet closes.
+    /// Android's own mark, drawn edge to edge, for the clip that starts Android.
+    private static func androidIconPNG() -> Data? {
+        // Square, not AndroidMark's rounded tile: iOS rounds home-screen icons itself, and transparent corners
+        // would show through its mask.
+        let mark = Image(systemName: "apps.iphone")
+            .font(.system(size: 180 * 0.46, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 180, height: 180)
+            .background(AndroidMark.green.gradient)
+        let renderer = ImageRenderer(content: mark)
+        renderer.scale = 1
+        return renderer.uiImage?.pngData()
+    }
+
     static func generate(for app: TLApp) {
-        let data = profile(for: app)
-        let name = "\(safe(app.label)).mobileconfig"
+        serve(profile(for: app), label: app.label, id: app.id)
+    }
+
+    /// A clip that starts Android.
+    static func generateAndroid() {
+        serve(profile(id: "android", label: "Android", link: androidLink(package: nil), icon: androidIconPNG()),
+              label: "Android", id: "android")
+    }
+
+    /// A clip that starts Android and opens this app in it.
+    static func generate(forAndroid pkg: AndroidHost.Package) {
+        serve(profile(id: "android." + pkg.name, label: pkg.label, link: androidLink(package: pkg.name),
+                      icon: iconPNG(path: pkg.iconPath) ?? androidIconPNG()),
+              label: pkg.label, id: pkg.name)
+    }
+
+    /// Serve the profile and open it. The server stays up until the sheet closes.
+    private static func serve(_ data: Data, label: String, id: String) {
+        let name = "\(safe(label)).mobileconfig"
         let server = ProfileServer(body: data, name: name)
         server.start { url in
             guard let url else {
                 HuskLog.log("ui", "app clip: could not start the local server")
                 return
             }
-            HuskLog.log("ui", "app clip for \(app.id): serving \(url.absoluteString)")
+            HuskLog.log("ui", "app clip for \(id): serving \(url.absoluteString)")
             let safari = SFSafariViewController(url: url)
             safari.dismissButtonStyle = .done
             safari.presentationController?.delegate = server

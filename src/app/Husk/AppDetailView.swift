@@ -33,6 +33,11 @@ enum LibraryRoute: Hashable {
     @Published var androidStarted = false
     /// An Android app to open as soon as Android is up: asked for from its page while Android was off.
     @Published var pendingAndroidLaunch: String?
+    /// A Home Screen clip asked for Android: "" for Android itself, else a package to open in it. The root view starts
+    /// Android (turning on JIT first if it must) and clears this once the request is in hand.
+    @Published var androidFromClip: String?
+    /// Bumped on every clip tap, so tapping the same clip again is noticed even though androidFromClip did not change.
+    @Published var androidClipTaps = 0
 
     /// A game to start as soon as its page is up: the one Husk was closed to switch to (see `switchTo`).
     @Published var autoPlay: String?

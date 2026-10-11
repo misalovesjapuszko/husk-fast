@@ -30,6 +30,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Minutes rather than hours: compile the app's Swift without QEMU, ANGLE or
+  # MoltenVK, so a Swift mistake (or a framework this Xcode cannot read) shows
+  # up long before the full build reaches the app. Linking fails here by
+  # design -- those libraries are what the build job makes -- so only compiler
+  # errors in Swift or a Swift interface fail this job.
+  swift-check:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the newest Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen qemu
+
+      - name: Compile
+        run: |
+          ./scripts/fetch_phase0_guest.sh
+          cd src/app && xcodegen generate --quiet
+          set +e
+          xcodebuild -project Husk.xcodeproj -scheme Husk -sdk iphoneos -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGNING_ALLOWED=NO \
+            -IDEBuildingContinueBuildingAfterErrors=YES build > "$RUNNER_TEMP/swift.log" 2>&1
+          grep -E ': error:' "$RUNNER_TEMP/swift.log" | sort -u > "$RUNNER_TEMP/errors.txt"
+          echo "== every error (link and C errors are expected here) =="
+          cat "$RUNNER_TEMP/errors.txt"
+          grep -E '\.(swift|swiftinterface):[0-9]+:[0-9]+: error:' "$RUNNER_TEMP/errors.txt" > "$RUNNER_TEMP/swift-errors.txt"
+          echo "== Swift errors =="
+          cat "$RUNNER_TEMP/swift-errors.txt"
+          [ ! -s "$RUNNER_TEMP/swift-errors.txt" ]
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-check-log
+          path: ${{ runner.temp }}/swift.log
+          if-no-files-found: ignore
+
   build:
     runs-on: macos-26
     timeout-minutes: 360

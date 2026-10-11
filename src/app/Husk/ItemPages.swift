@@ -398,6 +398,18 @@ struct AndroidAppPage: View {
             }
 
             Section {
+                Button { AppClip.generate(forAndroid: live) } label: {
+                    Label("Generate App Clip", systemImage: "apps.iphone.badge.plus")
+                }
+            } header: {
+                Text("Home Screen")
+            } footer: {
+                Text("Puts \(live.label) on your Home Screen with its own icon. Tapping it opens Husk, starts Android if it is "
+                   + "not running, and opens \(live.label). Husk downloads a profile: open Settings, tap Profile Downloaded, "
+                   + "then Install.")
+            }
+
+            Section {
                 Button(role: .destructive) { confirmUninstall = true } label: {
                     Label("Uninstall", systemImage: "trash")
                 }
@@ -493,6 +505,19 @@ struct AndroidSystemPage: View {
                     .disabled(runner.isSavingState)
                 } footer: {
                     Text("Saving keeps Android exactly as it is, so the next start skips booting.")
+                }
+            }
+
+            if guest.state == .ready {
+                Section {
+                    Button { AppClip.generateAndroid() } label: {
+                        Label("Generate App Clip", systemImage: "apps.iphone.badge.plus")
+                    }
+                } header: {
+                    Text("Home Screen")
+                } footer: {
+                    Text("Puts Android on your Home Screen. Tapping it opens Husk and starts Android, or shows it if it is "
+                       + "already running. Husk downloads a profile: open Settings, tap Profile Downloaded, then Install.")
                 }
             }
 
