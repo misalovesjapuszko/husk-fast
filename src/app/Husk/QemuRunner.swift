@@ -191,6 +191,21 @@ final class QemuRunner: ObservableObject {
             + (soundEnabled ? "+snd" : "")
             + (landscapeGuest ? "+land" : "")
             + (customResolution.map { "+\($0.w)x\($0.h)" } ?? "")
+            + (customSmp.map { "+\($0)cpu" } ?? "")
+    }
+
+    /// A vCPU count chosen by hand, when there is one.
+    ///
+    /// Phones have two performance cores and four efficiency cores, so the
+    /// default four vCPUs put half the guest on cores several times slower.
+    /// The guest kernel waits on its slowest CPU often -- TLB shootdowns, RCU,
+    /// spinlocks held by a vCPU that is not running -- so fewer vCPUs can be
+    /// faster overall. Which count wins is a per-device measurement, hence a
+    /// setting. Like a custom resolution it overrides the shipped snapshot's
+    /// pin and is part of the stamp, so the first launch boots cold and saves.
+    nonisolated static var customSmp: Int? {
+        let n = UserDefaults.standard.integer(forKey: "husk.vcpus")
+        return (1...8).contains(n) ? n : nil
     }
 
     /// Whether Husk saves the machine on its own once Android settles.
@@ -912,8 +927,9 @@ final class QemuRunner: ObservableObject {
                                             : GuestImage.defaultCpu
     }
     private var machineSmp: Int {
-        GuestImage.shared.hasShippedSnapshot ? GuestImage.shared.snapshotPins.smp
-                                            : GuestImage.defaultSmp
+        if let n = QemuRunner.customSmp { return n }
+        return GuestImage.shared.hasShippedSnapshot ? GuestImage.shared.snapshotPins.smp
+                                                   : GuestImage.defaultSmp
     }
 
     private func guestMemoryMiB() -> Int {

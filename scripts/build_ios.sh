@@ -180,6 +180,7 @@ stage_qemu() {
             --disable-png --disable-vte --disable-zstd \
             --disable-nettle --disable-gcrypt --disable-auth-pam \
             --disable-install-blobs --disable-sparse --disable-debug-info \
+            ${HUSK_QEMU_LTO:+--enable-lto} \
             --extra-cflags="$CFLAGS" --extra-ldflags="$LDFLAGS" \
       && make -j"$NCPU" ) > "$log" 2>&1 || fail qemu "$log"
     husk_stage_dylib

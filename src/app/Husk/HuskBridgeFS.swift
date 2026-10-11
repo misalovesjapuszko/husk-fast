@@ -1682,6 +1682,28 @@ final class AndroidHost: ObservableObject {
                               + "(select every .apk together) or the build has no "
                               + "arm64-v8a library and this guest is 64-bit only")
                 }
+
+                // Compile ahead of time. A fresh install has no profile, so ART
+                // would run it in its interpreter -- itself emulated -- and JIT
+                // it at runtime, where every page ART writes code into makes
+                // TCG throw away its own translations of that page. Paying once
+                // here, before the save below, keeps the result in the snapshot.
+                // Without -f a package already compiled to speed is skipped, so
+                // listing every third-party app reaches the new one (whatever
+                // its name) and a reinstall, which resets the filter, too.
+                let precompile = UserDefaults.standard.object(forKey: "husk.precompile")
+                    as? Bool ?? true
+                if ok && precompile {
+                    await MainActor.run { self?.busy = "Optimising \(name) for speed…" }
+                    let started = Date()
+                    let compiled = (try? GuestBridge.shared.shell(
+                        "for p in $(pm list packages -3 | cut -d: -f2); do "
+                        + "cmd package compile -m speed \"$p\" >/dev/null 2>&1; done; echo done",
+                        timeout: installBudget)) ?? ""
+                    HuskLog.log("bridge", "optimise \(name): "
+                              + (compiled.contains("done") ? "finished" : "timed out or failed")
+                              + " in \(Int(Date().timeIntervalSince(started)))s")
+                }
                 await self?.refreshPackages()
 
                 // Persist it, or it is gone on the next launch.

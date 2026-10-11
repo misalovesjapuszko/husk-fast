@@ -166,6 +166,18 @@ struct PerformanceSettings: View {
     @State private var sound = UserDefaults.standard.bool(forKey: "husk.sound")
     @State private var soundDevice =
         UserDefaults.standard.object(forKey: "husk.soundDevice") as? Bool ?? true
+    @State private var vcpus = UserDefaults.standard.integer(forKey: "husk.vcpus")
+    @State private var precompile =
+        UserDefaults.standard.object(forKey: "husk.precompile") as? Bool ?? true
+
+    /// Performance cores, from the kernel's perflevel0 (the fastest cluster).
+    private var performanceCores: Int {
+        var n: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("hw.perflevel0.physicalcpu", &n, &size, nil, 0) == 0, n > 0
+        else { return ProcessInfo.processInfo.activeProcessorCount }
+        return Int(n)
+    }
 
     var body: some View {
         Form {
@@ -187,6 +199,30 @@ struct PerformanceSettings: View {
                      + "the frame rate. This is the default."
                      : "Every pixel is drawn by the emulated CPU. Much slower, and only "
                      + "worth choosing if the GPU misbehaves.")
+            }
+
+            Section {
+                Picker("Virtual CPUs", selection: $vcpus) {
+                    Text("Automatic").tag(0)
+                    ForEach([2, 3, 4, 6], id: \.self) { Text("\($0)").tag($0) }
+                }
+                .onChange(of: vcpus) { v in
+                    UserDefaults.standard.set(v, forKey: "husk.vcpus")
+                    HuskLog.log("ui", v == 0 ? "vCPUs: automatic" : "vCPUs: \(v)")
+                }
+                Toggle("Optimise apps when installing", isOn: $precompile)
+                    .onChange(of: precompile) { v in
+                        UserDefaults.standard.set(v, forKey: "husk.precompile")
+                    }
+            } header: {
+                Text("Speed")
+            } footer: {
+                Text("This device has \(performanceCores) fast cores. Android gets 4 "
+                   + "virtual CPUs unless you choose; matching the fast cores can be "
+                   + "quicker, so compare the frame rate. A new count costs one cold "
+                   + "boot.\n\nOptimising compiles an app ahead of time so it does not "
+                   + "run interpreted on the emulated CPU. Installs take longer; the "
+                   + "app runs faster.")
             }
 
             Section {
